@@ -17,22 +17,30 @@ def set_font(run, font_name='微軟正黑體', size=11, bold=False):
 def generate_docx(data):
     print("--- 開始生成 Word 檔案 ---")
     
-    # 【核心修正】檢查收到的是否為 list，如果是就取第一個元素
-    if isinstance(data, list) and len(data) > 0:
-        data = data[0]
+    # 【核心優化】深度解包：不論包了幾層 List，一路拆到看到 Dict 為止
+    current_data = data
+    while isinstance(current_data, list):
+        if len(current_data) > 0:
+            print(f"解開一層清單包裝，剩餘內容類型: {type(current_data[0])}")
+            current_data = current_data[0]
+        else:
+            print("錯誤：收到空的資料清單")
+            return None, "Empty List"
     
-    # 再次檢查 data 是否為字典，如果不是代表傳入資料完全錯誤
-    if not isinstance(data, dict):
-        print(f"錯誤：預期收到 dict，但收到 {type(data)}")
-        return None, "Invalid Data Format"
+    if not isinstance(current_data, dict):
+        print(f"嚴重錯誤：最終解析結果不是字典，而是 {type(current_data)}")
+        return None, "Invalid Data Structure"
 
     doc = Document()
-    doc_title = data.get('document_title', '文件提取結果')
-    pages = data.get('pages', [])
+    doc_title = current_data.get('document_title', '文件提取結果')
+    pages = current_data.get('pages', [])
+
+    if not pages:
+        print("警告：解析出的字典中沒有頁面資料")
 
     for i, page in enumerate(pages):
         section_title = page.get('section_title')
-        if not section_title or section_title == "null" or section_title == "":
+        if not section_title or section_title in ["null", ""]:
             section_title = doc_title
             
         st_p = doc.add_paragraph()
@@ -46,7 +54,7 @@ def generate_docx(data):
         pl_run = pl_p.add_run(f"頁面：{page_label}")
         set_font(pl_run, size=9)
 
-        headers = page.get('headers', ["成語", "解釋"])
+        headers = page.get('headers', ["欄位1", "欄位2"])
         table_data = page.get('data', [])
         
         table = doc.add_table(rows=1, cols=len(headers))
@@ -99,15 +107,20 @@ def api_convert():
     print(">>> 收到 Dify API 請求 <<<")
     try:
         data = request.get_json()
-        print(f"Debug: 數據類型為 {type(data)}") # 這行能讓我們在 Log 看到真相
+        print(f"原始數據類型: {type(data)}")
         
         docx_file, doc_title = generate_docx(data)
         if docx_file is None:
-            return jsonify({"error": "Data structure error"}), 400
+            return jsonify({"error": "Data structure error", "details": doc_title}), 400
 
-        return send_file(docx_file, as_attachment=True, download_name=f"{doc_title}.docx", mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        return send_file(
+            docx_file, 
+            as_attachment=True, 
+            download_name=f"{doc_title}.docx", 
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        )
     except Exception as e:
-        print(f"API 轉檔錯誤: {e}")
+        print(f"API 進入點發生錯誤: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':

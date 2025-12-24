@@ -15,32 +15,38 @@ def set_font(run, font_name='微軟正黑體', size=11, bold=False):
     run.font.bold = bold
 
 def generate_docx(data):
-    print("--- 開始生成 Word 檔案 ---")
+    print("--- 開始進入生成邏輯 ---")
     
-    # 【核心優化】深度解包：不論包了幾層 List，一路拆到看到 Dict 為止
+    # 【核心修正】強效解析邏輯：處理 List、String 或 Dict
     current_data = data
-    while isinstance(current_data, list):
-        if len(current_data) > 0:
-            print(f"解開一層清單包裝，剩餘內容類型: {type(current_data[0])}")
-            current_data = current_data[0]
-        else:
-            print("錯誤：收到空的資料清單")
-            return None, "Empty List"
     
-    if not isinstance(current_data, dict):
-        print(f"嚴重錯誤：最終解析結果不是字典，而是 {type(current_data)}")
-        return None, "Invalid Data Structure"
+    # 1. 如果資料被包在 List 裡，先拆開
+    if isinstance(current_data, list) and len(current_data) > 0:
+        current_data = current_data[0]
+        print("已拆解 List 包裝")
 
+    # 2. 如果資料是字串 (String)，將其轉為字典 (Dict)
+    if isinstance(current_data, str):
+        try:
+            print("偵測到字串格式，嘗試進行 JSON 解析...")
+            current_data = json.loads(current_data)
+        except Exception as e:
+            print(f"JSON 解析失敗: {e}")
+            return None, "JSON Parsing Error"
+
+    # 3. 確保最終是 Dict
+    if not isinstance(current_data, dict):
+        print(f"錯誤：最終格式不符，類型為 {type(current_data)}")
+        return None, "Invalid Final Structure"
+
+    # --- 開始建立 Word ---
     doc = Document()
     doc_title = current_data.get('document_title', '文件提取結果')
     pages = current_data.get('pages', [])
 
-    if not pages:
-        print("警告：解析出的字典中沒有頁面資料")
-
     for i, page in enumerate(pages):
         section_title = page.get('section_title')
-        if not section_title or section_title in ["null", ""]:
+        if not section_title or section_title in ["null", "", None]:
             section_title = doc_title
             
         st_p = doc.add_paragraph()
@@ -54,7 +60,7 @@ def generate_docx(data):
         pl_run = pl_p.add_run(f"頁面：{page_label}")
         set_font(pl_run, size=9)
 
-        headers = page.get('headers', ["欄位1", "欄位2"])
+        headers = page.get('headers', ["成語", "解釋"])
         table_data = page.get('data', [])
         
         table = doc.add_table(rows=1, cols=len(headers))
@@ -79,12 +85,12 @@ def generate_docx(data):
     file_stream = io.BytesIO()
     doc.save(file_stream)
     file_stream.seek(0)
-    print(f"--- Word 生成成功：{doc_title} ---")
+    print(f"--- Word 生成成功 ---")
     return file_stream, doc_title
 
 @app.route('/api/test', methods=['GET'])
 def api_test():
-    return "API 伺服器運作中！", 200
+    return "API 伺服器正常運作中！", 200
 
 @app.route('/')
 def index():
@@ -96,22 +102,29 @@ def convert():
         return "未選擇檔案", 400
     file = request.files['json_file']
     try:
-        data = json.loads(file.read().decode('utf-8'))
+        content = file.read().decode('utf-8')
+        data = json.loads(content)
         docx_file, doc_title = generate_docx(data)
         return send_file(docx_file, as_attachment=True, download_name=f"{doc_title}.docx", mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
     except Exception as e:
-        return f"解析錯誤: {str(e)}", 500
+        return f"網頁版錯誤: {str(e)}", 500
 
 @app.route('/api/convert', methods=['POST'])
 def api_convert():
     print(">>> 收到 Dify API 請求 <<<")
     try:
-        data = request.get_json()
-        print(f"原始數據類型: {type(data)}")
+        # 嘗試讀取 JSON Body
+        data = request.get_json(silent=True)
         
+        # 如果 request.get_json() 失敗（例如沒設 Header），手動從 Data 讀取
+        if data is None:
+            print("無法直接取得 JSON，嘗試讀取原始數據...")
+            data = json.loads(request.data.decode('utf-8'))
+
         docx_file, doc_title = generate_docx(data)
+        
         if docx_file is None:
-            return jsonify({"error": "Data structure error", "details": doc_title}), 400
+            return jsonify({"error": "Data structure error"}), 400
 
         return send_file(
             docx_file, 
@@ -120,7 +133,7 @@ def api_convert():
             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         )
     except Exception as e:
-        print(f"API 進入點發生錯誤: {e}")
+        print(f"API 進入點嚴重錯誤: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
